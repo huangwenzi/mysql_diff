@@ -129,7 +129,7 @@ def get_table_val(table_obj, sql_str):
             break
         
         # 字段str范围
-        matchObj = re.match( r".*?`(.*?),(.*)", sql_str, re.M|re.S)
+        matchObj = re.match( r".*?`(.*?),\n(.*)", sql_str, re.M|re.S)
         key_str = "`" + matchObj.group(1)
         sql_str = matchObj.group(2)
         
@@ -164,6 +164,12 @@ def get_table_val(table_obj, sql_str):
         if matchObj:
             key_obj.type = matchObj.group(1)
             key_obj.len = matchObj.group(2)
+        else:
+            # 不是type(len)格式
+            matchObj = re.match( r"(.*?) .*", key_str, re.M|re.S)
+            key_obj.type = matchObj.group(1)
+            key_obj.type = key_obj.type.strip()
+            key_obj.len = 0
             
         # 添加到table_obj
         table_obj.key_map[key_obj.key_name] = key_obj
@@ -210,10 +216,10 @@ def table_diff(new_table, old_table):
             # 检查差异
             old_key_obj = old_table.key_map[key_name]
             # 字段类型和长度
-            if new_key_obj.type != old_key_obj.type \
+            # or new_key_obj.not_null != old_key_obj.not_null \
+            if new_key_obj.type.lower() != old_key_obj.type.lower() \
                 or new_key_obj.len != old_key_obj.len \
-                or new_key_obj.not_null != old_key_obj.not_null \
-                or new_key_obj.default != old_key_obj.default \
+                or new_key_obj.default.lower() != old_key_obj.default.lower() \
                 or new_key_obj.comment != old_key_obj.comment:
                     sql_str += ("ALTER TABLE %s MODIFY "%(table_name) + key_obj_get_sql(new_key_obj) + "\n")
     # 删除的字段
@@ -230,10 +236,16 @@ def table_diff(new_table, old_table):
 
 # 获取字段类对应sql
 def key_obj_get_sql(key_obj):
-    sql_str = "{0} {1}({2}) {3}".format(
+    # 类型可能没有长度
+    type_str = ""
+    if key_obj.len == 0:
+        type_str = key_obj.type
+    else:
+        type_str = "{0}({1})".format(key_obj.type, key_obj.len)
+        
+    sql_str = "{0} {1} {2}".format(
         key_obj.key_name
-        , key_obj.type
-        , key_obj.len
+        , type_str
         , key_obj.not_null
     )
     # 是否有默认值

@@ -28,10 +28,12 @@ def run(db_name):
         return 
     
     # 导出一份到本地
-    with open(db_cfg["out_path"], 'w+', encoding = 'utf8') as f:
+    with open(db_cfg["out_path"], 'a+', encoding = 'utf8') as f:
         f.write("-- %s\n"%(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())))
         f.write(sql_str)
     # 执行修改
     cursor.execute(sql_str)
 
-run("web_svr")
+now = time.time()
+run("game_2")
+print(time.time() - now)
