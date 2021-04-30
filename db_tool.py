@@ -11,21 +11,26 @@ class KeyObj():
     default = ""    # 默认值
     comment = ""    # 注释
 
+# 索引对象
+class IndexObj():
+    sql_str = ""    # 原sql
+    name = ""       # 索引名
+    field = []      # 索引字段
 
 # 表对象
 class TableObj():
     sql_str = ""    # 原sql
     table_name = "" # 表名
     key_map = {}    # key:字段
-    key_list = {}   # 普通键
-    primary_key = []# 主键
+    ordinary_key = {}   # 普通键
+    primary_key = None# 主键
     unique_key = {} # 联合键
     param = ""      # 表参数
     
     def __init__(self):
         self.key_map = {}
-        self.key_list = {}
-        self.primary_key = []
+        self.ordinary_key = {}
+        self.primary_key = None
         self.unique_key = {}
         
 
@@ -56,7 +61,7 @@ def analysis_db_table(cursor, db_name):
     cursor.execute("create database if not exists %s"%(db_name))
     cursor.execute("use %s"%(db_name))
     # 获取表名
-    sql = "select table_name from information_schema.tables where table_schema='%s' and table_type='base table';"%(db_name)
+    sql = "select table_name from information_schema.tables where table_schema='%s' and table_type='base table';\n"%(db_name)
     cursor.execute(sql)
     # 读取表名
     table_name_list = []
@@ -80,7 +85,7 @@ def create_diff_sql(table_map, db_table_map):
     add_table_sql = ""
     for table_name in table_map:
         if table_name not in db_table_map:
-            add_table_sql += (table_map[table_name].sql_str + "\n")
+            add_table_sql += table_map[table_name].sql_str
         
     # 删除的表
     delete_table_sql = ""
@@ -93,7 +98,7 @@ def create_diff_sql(table_map, db_table_map):
     for table_name in table_map:
         if table_name in db_table_map:
             diff_sql_str = table_diff(table_map[table_name], db_table_map[table_name])
-            modify_table_sql += (diff_sql_str + "\n")
+            modify_table_sql += diff_sql_str
     return add_table_sql + delete_table_sql + modify_table_sql
     
 
@@ -180,25 +185,41 @@ def get_table_key(table_obj, sql_str):
     # 获取主键
     matchObj = re.match( r"(.*)PRIMARY KEY \((.*?)\)(.*)", sql_str, re.M|re.S)
     if matchObj:
+        index_obj = IndexObj()
         primary_key = matchObj.group(2)
         primary_key = primary_key.replace("`","")
-        table_obj.primary_key = primary_key.split(",")
+        index_obj.field = primary_key.split(",")
+        index_obj.field = list_del_blank(index_obj.field)
+        table_obj.primary_key = index_obj
         sql_str = matchObj.group(1) + matchObj.group(3)
     # 获取联合键
-    matchObj = re.match( r"(.*)UNIQUE KEY `(.*?)` \((.*?)\)(.*)", sql_str, re.M|re.S)
-    if matchObj:
-        unique_key = matchObj.group(3)
-        unique_key = unique_key.replace("`","")
-        unique_key = unique_key.split(",")
-        table_obj.unique_key[matchObj.group(2)] = unique_key
-        sql_str = matchObj.group(1) + matchObj.group(4)
+    while True:
+        matchObj = re.match( r"(.*)UNIQUE KEY `(.*?)` \((.*?)\)(.*)", sql_str, re.M|re.S)
+        if matchObj:
+            index_obj = IndexObj()
+            index_obj.name = matchObj.group(2)
+            unique_key = matchObj.group(3)
+            unique_key = unique_key.replace("`","")
+            index_obj.field = unique_key.split(",")
+            index_obj.field = list_del_blank(index_obj.field)
+            table_obj.unique_key[index_obj.name] = index_obj
+            sql_str = matchObj.group(1) + matchObj.group(4)
+        else:
+            break
     # 获取普通键
     while True :
         matchObj = re.match( r"(.*)KEY `(.*?)` \(`(.*?)`\)(.*)", sql_str, re.M|re.S)
         if matchObj:
-            table_obj.key_list[matchObj.group(2)] = matchObj.group(3)
+            index_obj = IndexObj()
+            index_obj.name = matchObj.group(2)
+            key_list = matchObj.group(3)
+            key_list = key_list.replace("`","")
+            index_obj.field = key_list.split(",")
+            index_obj.field = list_del_blank(index_obj.field)
+            table_obj.ordinary_key[index_obj.name] = index_obj
             sql_str = matchObj.group(1) + matchObj.group(4)
-        break
+        else:
+            break
 
 # 生成两个表的差异sql， 第一个表为主
 def table_diff(new_table, old_table):
@@ -210,7 +231,7 @@ def table_diff(new_table, old_table):
         # 是否新字段
         if key_name not in old_table.key_map:
             sql_str += "ALTER TABLE %s ADD "%(table_name)
-            sql_str += (key_obj_get_sql(new_key_obj) + "\n")
+            sql_str += (key_obj_get_sql(new_key_obj))
         else:
             # 字段存在
             # 检查差异
@@ -221,14 +242,77 @@ def table_diff(new_table, old_table):
                 or new_key_obj.len != old_key_obj.len \
                 or new_key_obj.default.lower() != old_key_obj.default.lower() \
                 or new_key_obj.comment != old_key_obj.comment:
-                    sql_str += ("ALTER TABLE %s MODIFY "%(table_name) + key_obj_get_sql(new_key_obj) + "\n")
+                    sql_str += ("ALTER TABLE %s MODIFY "%(table_name) + key_obj_get_sql(new_key_obj))
     # 删除的字段
     for key_name in old_table.key_map:
         if key_name not in new_table.key_map:
             sql_str += ("ALTER TABLE %s DROP %s;\n")%(table_name, key_name)
     
     # 索引
+    # 主键
+    primary_key_sql = ""
+    new_primary_key = new_table.primary_key
+    old_primary_key = old_table.primary_key
+    if not new_primary_key and not old_primary_key:
+        # 新表,旧表主键都不存在
+        pass
+    elif new_primary_key and not old_primary_key:
+        # 新表主键存在 旧表主键不存在
+        # 添加主键
+        primary_key_str = ",".join(new_primary_key.field)
+        primary_key_sql = "ALTER TABLE {0} ADD PRIMARY KEY ({1});\n".format(
+            table_name
+            , primary_key_str
+        )
+    elif new_primary_key and old_primary_key:
+        # 新表主键存在 旧表主键也存在
+        if not list_is_same(new_primary_key.field, old_primary_key.field):
+            # 主键不一致
+            primary_key_sql = "ALTER TABLE {0} DROP PRIMARY KEY;\n".format(table_name)
+            primary_key_str = ",".join(new_primary_key.field)
+            primary_key_sql += "ALTER TABLE {0} ADD PRIMARY KEY ({1});\n".format(
+                table_name
+                , primary_key_str
+            )
+    elif not new_primary_key and old_primary_key:
+        # 新表主键不存在 旧表主键存在
+        primary_key_sql = "ALTER TABLE {0} DROP PRIMARY KEY;\n".format(table_name)
+    sql_str += primary_key_sql
     
+    # 联合键
+    # 添加和修改的键
+    new_unique_key = new_table.unique_key
+    old_unique_key = old_table.unique_key
+    for tmp_key in new_unique_key:
+        unique_key_str = ",".join(new_unique_key[tmp_key].field)
+        if tmp_key not in old_unique_key:
+            # 旧表不存在
+            sql_str += "ALTER TABLE {0} ADD UNIQUE {1}({2});\n".format(table_name, tmp_key, unique_key_str)
+        elif not list_is_same(old_unique_key[tmp_key].field, new_unique_key[tmp_key].field):
+            # 键存在，但值不一致
+            sql_str += "ALTER TABLE {0} DROP INDEX {1};\n".format(table_name, tmp_key)
+            sql_str += "ALTER TABLE {0} ADD UNIQUE {1}({2});\n".format(table_name, tmp_key, unique_key_str)
+    # 删除的键
+    for tmp_key in old_unique_key:
+        if tmp_key not in new_unique_key:
+            sql_str += "ALTER TABLE {0} DROP INDEX {1};\n".format(table_name, tmp_key)
+            
+    # 普通键
+    new_ordinary_key = new_table.ordinary_key
+    old_ordinary_key = old_table.ordinary_key
+    for tmp_key in new_ordinary_key:
+        ordinary_key_str = ",".join(new_ordinary_key[tmp_key].field)
+        if tmp_key not in old_ordinary_key:
+            # 旧表不存在
+            sql_str += "ALTER TABLE {0} ADD INDEX {1}({2});\n".format(table_name, tmp_key, ordinary_key_str)
+        elif not list_is_same(old_ordinary_key[tmp_key].field, new_ordinary_key[tmp_key].field):
+            # 键存在，但值不一致
+            sql_str += "ALTER TABLE {0} DROP INDEX {1};\n".format(table_name, tmp_key)
+            sql_str += "ALTER TABLE {0} ADD INDEX {1}({2});\n".format(table_name, tmp_key, ordinary_key_str)
+    # 删除的键
+    for tmp_key in old_ordinary_key:
+        if tmp_key not in new_ordinary_key:
+            sql_str += "ALTER TABLE {0} DROP INDEX {1};\n".format(table_name, tmp_key)
     
     # 表的属性
     # 暂时不考虑改这个
@@ -254,5 +338,24 @@ def key_obj_get_sql(key_obj):
     # 是否有注释
     if key_obj.comment != "":
         sql_str += " COMMENT '%s'"%(key_obj.comment)
-    sql_str += ";"
+    sql_str += ";\n"
     return sql_str
+
+# 两个表内容是否一致，顺序不需要一致
+def list_is_same(a_list, b_list):
+    if len(a_list) != len(b_list):
+        return False
+    
+    # 遍历元素
+    for item in a_list:
+        if item not in b_list:
+            return False
+    return True
+
+# 字符串列表删除字符串空白
+def list_del_blank(list):
+    new_list = []
+    for tmp in list:
+        tmp = tmp.strip()
+        new_list.append(tmp)
+    return new_list
