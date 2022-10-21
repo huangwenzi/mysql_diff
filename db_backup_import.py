@@ -32,15 +32,17 @@ def backup_db(base_name, save_path):
     print(ret)
 
 # 导入数据库 
-def import_db(cursor, sql_path, base_name, user):
-    cursor.execute("create database if not exists %s;"%(base_name))    
-    cursor.execute("use %s;"%(base_name))
+def import_db(sql_path, base_name, user):
+    do_str = "create database if not exists %s;"%(base_name)
+    recover = "mysql -u%s -e\"%s\""%(user, do_str)
+    ret = os.popen(recover).read()
+    print(ret)
+       
     recover = "mysql -u%s %s < %s"%(user, base_name, sql_path)
     ret = os.popen(recover).read()
     print(ret)
     # cursor.execute("source %s;"%(sql_path))
 
 # 测试例子
-# cursor = connect("localhost", user)
-# backup_db("game_p1_s1", sql_path)
-# import_db(cursor, sql_path, "game_p1_s1_copy", user)
+backup_db("game_p1_s1", sql_path)
+import_db(sql_path, "game_p1_s1_copy", user)
