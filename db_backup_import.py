@@ -1,4 +1,4 @@
-import MySQLdb
+import pymysql
 import os
 
 # 需要配置
@@ -17,7 +17,7 @@ sql_path = "./game_p1_s1_backup.sql"
 
 # 连接数据库 
 def connect(host, user, password):
-    db = MySQLdb.Connect(         
+    db = pymysql.Connect(         
         host = host      
         , user = user         
         , password = password         

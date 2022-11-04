@@ -1,4 +1,4 @@
-import MySQLdb
+import pymysql
 import time
 
 
@@ -12,11 +12,11 @@ def run(db_name):
     # 解析sql文件
     table_map = dbToolMd.analysis_sql_file(db_cfg["sql_path"])
     # 导出数据库表结构
-    db = MySQLdb.Connect(
+    db = pymysql.Connect(
         host = db_cfg["host"], 
         user = db_cfg["user_name"], 
         password = db_cfg["user_pass"], 
-        # db = tmp_db_name, 
+        database=db_cfg["db_name"],
         charset='utf8' )
     cursor = db.cursor()
     db_table_map = dbToolMd.analysis_db_table(cursor, db_cfg["db_name"])
@@ -31,9 +31,15 @@ def run(db_name):
     with open(db_cfg["out_path"], 'a+', encoding = 'utf8') as f:
         f.write("-- %s\n"%(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())))
         f.write(sql_str)
+        print(sql_str)
     # 执行修改
     cursor.execute(sql_str)
+    
+    # # 读取
+    # with open(db_cfg["out_path"], 'r', encoding = 'utf8') as f:
+    #     f_str = f.read()
+    #     print(f_str)
 
-now = time.time()
-run("game_2")
-print(time.time() - now)
+# now = time.time()
+# run("game_2")
+# print(time.time() - now)

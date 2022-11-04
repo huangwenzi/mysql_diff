@@ -10,6 +10,7 @@ class KeyObj():
     not_null = ""   # 是否null
     default = ""    # 默认值
     comment = ""    # 注释
+    unsigned = ""   # 是否无符号
 
 # 索引对象
 class IndexObj():
@@ -61,7 +62,8 @@ def analysis_db_table(cursor, db_name):
     cursor.execute("create database if not exists %s"%(db_name))
     cursor.execute("use %s"%(db_name))
     # 获取表名
-    sql = "select table_name from information_schema.tables where table_schema='%s' and table_type='base table';\n"%(db_name)
+    # sql = "select table_name from information_schema.tables where table_schema='%s' and table_type='base table';\n"%(db_name)
+    sql = "show tables;"
     cursor.execute(sql)
     # 读取表名
     table_name_list = []
@@ -71,6 +73,7 @@ def analysis_db_table(cursor, db_name):
     
     # 获取创表sql
     sql_str = ""
+    # print("analysis_db_table db_name:%s table_name_list:%s"%(db_name, table_name_list))
     for table_name in table_name_list:
         cursor.execute("show create table %s"%(table_name))
         # results = cursor.fetchall()
@@ -85,6 +88,8 @@ def create_diff_sql(table_map, db_table_map):
     add_table_sql = ""
     for table_name in table_map:
         if table_name not in db_table_map:
+            print("table_map %s"%(table_map.keys()))
+            print("db_table_map %s"%(db_table_map.keys()))
             add_table_sql += table_map[table_name].sql_str
         
     # 删除的表
@@ -116,56 +121,59 @@ def str_to_table_obj(sql_str):
     return table_obj
 
 # 获取表名
-def get_table_name(table_obj, sql_str):
-    matchObj = re.match( r".*?`(.*?)`.*?\((.*)\) (.*);.*", sql_str, re.M|re.S)
+def get_table_name(table_obj:TableObj, sql_str:str):
+    # print("sql_str:%s\n"%(sql_str))
     # 表名
-    table_obj.table_name = matchObj.group(1)
-    sql_str = matchObj.group(2)
+    table_obj.table_name,sql_str = get_str_by_begin_end(sql_str, "`", "`")
+    # 表字段
+    field_str,sql_str = get_str_by_begin_end(sql_str, "(", "\n)")
     # 表参数
-    table_obj.param = matchObj.group(3)
-    return sql_str
+    param_end = sql_str.find(";)")
+    table_obj.param = sql_str[: param_end]
+    # print("table_obj.table_name:%s\n"%(table_obj.table_name))
+    # print("table_obj.param:%s\n"%(table_obj.param))
+    # print("field_str:%s\n"%(field_str))
+    return field_str
+    
+    # re实现
+    # matchObj = re.match( r".*?`(.*?)`.*?\((.*)\) (.*);.*", sql_str, re.M|re.S)
+    # # 表名
+    # table_obj.table_name = matchObj.group(1)
+    # sql_str = matchObj.group(2)
+    # # 表参数
+    # table_obj.param = matchObj.group(3)
+    # return sql_str
 
 # 获取字段
-def get_table_val(table_obj, sql_str):
+def get_table_val(table_obj:TableObj, sql_str:str):
     while True :
         sql_str = sql_str.lstrip()
         # 是否还是字段行
         if sql_str.find("`") != 0:
             break
         
+        # find实现
         # 字段str范围
-        matchObj = re.match( r".*?`(.*?),\n(.*)", sql_str, re.M|re.S)
-        key_str = "`" + matchObj.group(1)
-        sql_str = matchObj.group(2)
-        
+        key_str_end = sql_str.find("\n")
+        key_str = sql_str[:key_str_end]
+        sql_str = sql_str[key_str_end:]
         # 获取key
         key_obj = KeyObj()
         key_obj.sql_str = key_str
-        matchObj = re.match( r"`(.*?)`(.*)", key_str, re.M|re.S)
-        key_obj.key_name = matchObj.group(1)
-        key_str = matchObj.group(2)
-        
+        key_obj.key_name,key_str = get_str_by_begin_end(key_str, "`", "`")
         # 获取注释
-        matchObj = re.match( r"(.*)COMMENT '(.*?)'(.*)", key_str, re.M|re.S)
-        if matchObj:
-            key_obj.comment = matchObj.group(2)
-            key_str = matchObj.group(1) + matchObj.group(3)
-        
+        key_obj.comment,_tmp = get_str_by_begin_end(key_str, "COMMENT '", "'")
         # 获取默认值
-        matchObj = re.match( r"(.*)DEFAULT '(.*?)'(.*)", key_str, re.M|re.S)
-        if matchObj:
-            key_obj.default = matchObj.group(2)
-            key_str = matchObj.group(1) + matchObj.group(3)
-            
+        key_obj.default,_tmp = get_str_by_begin_end(key_str, "DEFAULT '", "'")
+        # 是否无符号
+        if key_str.find("unsigned") != -1:
+            key_obj.unsigned = "unsigned"
         # 获取是否不为空
-        matchObj = re.match( r"(.*)NOT NULL(.*)", key_str, re.M|re.S)
-        if matchObj:
+        if key_str.find("NOT NULL") != -1:
             key_obj.not_null = "NOT NULL"
-            key_str = matchObj.group(1) + matchObj.group(2)
-            
         # 获取类型和长度
         key_str = key_str.lstrip()
-        matchObj = re.match( r"(.*?)\((.*?)\).*", key_str, re.M|re.S)
+        matchObj = re.match( r".*? (.*?)\((.*?)\).*", key_str, re.M|re.S)
         if matchObj:
             key_obj.type = matchObj.group(1)
             key_obj.len = matchObj.group(2)
@@ -175,9 +183,54 @@ def get_table_val(table_obj, sql_str):
             key_obj.type = matchObj.group(1)
             key_obj.type = key_obj.type.strip()
             key_obj.len = 0
+        
+        # # re实现
+        # # 字段str范围
+        # matchObj = re.match( r".*?`(.*?),\n(.*)", sql_str, re.M|re.S)
+        # key_str = "`" + matchObj.group(1)
+        # sql_str = matchObj.group(2)
+        
+        # # 获取key
+        # key_obj = KeyObj()
+        # key_obj.sql_str = key_str
+        # matchObj = re.match( r"`(.*?)`(.*)", key_str, re.M|re.S)
+        # key_obj.key_name = matchObj.group(1)
+        # key_str = matchObj.group(2)
+        
+        # # 获取注释
+        # matchObj = re.match( r"(.*)COMMENT '(.*?)'(.*)", key_str, re.M|re.S)
+        # if matchObj:
+        #     key_obj.comment = matchObj.group(2)
+        #     key_str = matchObj.group(1) + matchObj.group(3)
+        
+        # # 获取默认值
+        # matchObj = re.match( r"(.*)DEFAULT '(.*?)'(.*)", key_str, re.M|re.S)
+        # if matchObj:
+        #     key_obj.default = matchObj.group(2)
+        #     key_str = matchObj.group(1) + matchObj.group(3)
+            
+        # # 获取是否不为空
+        # matchObj = re.match( r"(.*)NOT NULL(.*)", key_str, re.M|re.S)
+        # if matchObj:
+        #     key_obj.not_null = "NOT NULL"
+        #     key_str = matchObj.group(1) + matchObj.group(2)
+            
+        # # 获取类型和长度
+        # key_str = key_str.lstrip()
+        # matchObj = re.match( r"(.*?)\((.*?)\).*", key_str, re.M|re.S)
+        # if matchObj:
+        #     key_obj.type = matchObj.group(1)
+        #     key_obj.len = matchObj.group(2)
+        # else:
+        #     # 不是type(len)格式
+        #     matchObj = re.match( r"(.*?) .*", key_str, re.M|re.S)
+        #     key_obj.type = matchObj.group(1)
+        #     key_obj.type = key_obj.type.strip()
+        #     key_obj.len = 0
             
         # 添加到table_obj
         table_obj.key_map[key_obj.key_name] = key_obj
+    print("key_map:%s"%(table_obj.key_map.keys()))
     return sql_str
 
 # 获取键
@@ -227,7 +280,7 @@ def table_diff(new_table, old_table):
     table_name = new_table.table_name
     # 添加和修改的字段
     for key_name in new_table.key_map:
-        new_key_obj = new_table.key_map[key_name]
+        new_key_obj:KeyObj = new_table.key_map[key_name]
         # 是否新字段
         if key_name not in old_table.key_map:
             sql_str += "ALTER TABLE %s ADD "%(table_name)
@@ -241,6 +294,7 @@ def table_diff(new_table, old_table):
             if new_key_obj.type.lower() != old_key_obj.type.lower() \
                 or new_key_obj.len != old_key_obj.len \
                 or new_key_obj.default.lower() != old_key_obj.default.lower() \
+                or new_key_obj.unsigned != old_key_obj.unsigned \
                 or new_key_obj.comment != old_key_obj.comment:
                     sql_str += ("ALTER TABLE %s MODIFY "%(table_name) + key_obj_get_sql(new_key_obj))
     # 删除的字段
@@ -325,7 +379,7 @@ def key_obj_get_sql(key_obj):
     if key_obj.len == 0:
         type_str = key_obj.type
     else:
-        type_str = "{0}({1})".format(key_obj.type, key_obj.len)
+        type_str = "{0}({1}) {2}".format(key_obj.type, key_obj.len, key_obj.unsigned)
         
     sql_str = "{0} {1} {2}".format(
         key_obj.key_name
@@ -359,3 +413,15 @@ def list_del_blank(list):
         tmp = tmp.strip()
         new_list.append(tmp)
     return new_list
+
+# 获取两个字符串间的字符串
+def get_str_by_begin_end(sql_str:str, begin_str:str, end_str:str):
+    begin_idx = sql_str.find(begin_str)
+    if begin_idx == -1:
+        return "",sql_str
+    begin_idx = begin_idx + len(begin_str)
+    end_idx = sql_str.find(end_str, begin_idx)
+    if end_idx == -1:
+        return "",sql_str
+    else:
+        return sql_str[begin_idx : end_idx], sql_str[end_idx:]
